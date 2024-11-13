@@ -1,0 +1,107 @@
+import requests
+import csv
+import os
+from datetime import datetime
+
+# API endpoint and headers
+api_url = "https://apilist.tronscanapi.com/api/transfer"
+api_key = "6285dc6b-94ab-469a-807b-8f2cebf9d19f"
+
+headers = {
+    "TRON-PRO-API-KEY": api_key
+}
+
+# Input file and output directory
+input_csv = r"C:\Users\Next\Downloads\small.csv"  # Replace with the exact file path
+output_dir = "wallet_data"  # Directory to save transaction CSVs
+os.makedirs(output_dir, exist_ok=True)
+
+log_file = "error_log.csv"
+
+# Fetch wallet transfer data
+def fetch_wallet_transfers(wallet_address):
+    params = {
+        "address": wallet_address,
+        "start": 0,
+        "limit": 100,
+        "direction": 0,
+        "reverse": "true",
+        "fee": "true",
+        "db_version": 1,
+    }
+    response = requests.get(api_url, headers=headers, params=params)
+    if response.status_code == 200:
+        return response.json().get("data", []), response.status_code
+    else:
+        return None, response.status_code
+
+# Save "from" or "to" transfers to CSV
+def save_transfers_to_csv(wallet_address, transfers, direction):
+    """
+    Saves transfers to a CSV file.
+    `direction` specifies whether it's 'from' or 'to' transactions.
+    """
+    csv_filename = os.path.join(output_dir, f"{wallet_address}_transfers_{direction}.csv")
+    with open(csv_filename, mode="w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(["Txn Hash", "Block", "Time (UTC)", "From", "To", "Amount", "Token", "Result"])
+        for transfer in transfers:
+            txn_hash = transfer.get("transactionHash", "N/A")
+            block = transfer.get("block", "N/A")
+            time_utc = datetime.utcfromtimestamp(transfer.get("timestamp", 0) / 1000).strftime('%Y-%m-%d %H:%M:%S')
+            from_address = transfer.get("transferFromAddress", "N/A")
+            to_address = transfer.get("transferToAddress", "N/A")
+            amount = transfer.get("amount", 0)
+            token = transfer.get("tokenType", "N/A")
+            result = transfer.get("contractRet", "N/A")
+            writer.writerow([txn_hash, block, time_utc, from_address, to_address, amount, token, result])
+    print(f"Data for {wallet_address} ({direction}) saved to {csv_filename}")
+
+# Main process
+with open(input_csv, mode="r", encoding="utf-8") as file:
+    reader = csv.reader(file)
+    next(reader)  # Skip header
+    for row in reader:
+        wallet_address = row[0].strip()
+        if wallet_address:
+            print(f"Fetching transfers for wallet: {wallet_address}")
+            transfers, status_code = fetch_wallet_transfers(wallet_address)
+            if transfers:
+                # Separate "from" and "to" transactions
+                from_transfers = [
+                    txn for txn in transfers if txn.get("transferFromAddress") == wallet_address
+                ]
+                to_transfers = [
+                    txn for txn in transfers if txn.get("transferToAddress") == wallet_address
+                ]
+
+                # Save "from" transactions
+                if from_transfers:
+                    save_transfers_to_csv(wallet_address, from_transfers, "from")
+                else:
+                    print(f"No 'from' transfers found for wallet: {wallet_address}")
+                    with open(log_file, mode="a", newline="", encoding="utf-8") as log:
+                        log_writer = csv.writer(log)
+                        log_writer.writerow([wallet_address, "No 'from' transfers found"])
+
+                # Save "to" transactions
+                if to_transfers:
+                    save_transfers_to_csv(wallet_address, to_transfers, "to")
+                else:
+                    print(f"No 'to' transfers found for wallet: {wallet_address}")
+                    with open(log_file, mode="a", newline="", encoding="utf-8") as log:
+                        log_writer = csv.writer(log)
+                        log_writer.writerow([wallet_address, "No 'to' transfers found"])
+
+            elif status_code == 404:
+                print(f"No transactions found for wallet: {wallet_address}")
+                with open(log_file, mode="a", newline="", encoding="utf-8") as log:
+                    log_writer = csv.writer(log)
+                    log_writer.writerow([wallet_address, "No transactions found"])
+            else:
+                print(f"Failed to fetch data for wallet: {wallet_address}. HTTP Status Code: {status_code}")
+                with open(log_file, mode="a", newline="", encoding="utf-8") as log:
+                    log_writer = csv.writer(log)
+                    log_writer.writerow([wallet_address, f"Error: {status_code}"])
+        else:
+            print("Empty wallet address encountered in the CSV file")
